@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>ACG23: Ray Tracing Scene</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <style>
+        .rgbEx { border:1px solid gray; }
+    </style>
+    
+    <script>
+        var imgSize= "256x128";
+        var camera = {"xyz":[ 0, -4.9,   3], "id":"cam1", "dir":[0.0, 1.0, -0.1]            };  // the (main) camera
+        var light1 = {"xyz":[12, -5.0,  10], "id":"lgt1", "RGB":[0.7, 0.7,  0.7], "on":true };  // light 1 in the scene
+        var light2 = {"xyz":[ 4, -9.0,  15], "id":"lgt2", "RGB":[0.5, 0.5,  0.5], "on":true };  // other light
+
+        // RGB for ambient light
+        var ambieR   = 0.5;
+        var ambieG   = 0.5;
+        var ambieB   = 0.5;
+        var ambieOn  = true;
+        var cookTOn  = true;
+        var shadowOn = true;
+        
+        let W = 1000;
+        var objs = [
+                     {ty:"T", pts:[[-7.0, 5, 0.2], [ 7.0, 5, 5.0], [-7.0, 5, 5.0]], mat:{ rgb:[0.87, 0.77, 0.12], kd:0.7, ks:0.3, nex:1}}  // triangle 1  
+                    ,{ty:"T", pts:[[-7.0, 5, 0.2], [ 7.0, 5, 0.2], [ 7.0, 5, 5.0]], mat:{ rgb:[0.87, 0.77, 0.12], kd:0.1, ks:0.9, nex:1}}  // triangle 1  
+
+                    // ##########  YOUR CODE : BEGIN of task 1 ############################################
+                    // Add 2 triangles (which form in sum a rectangle) for the ground. 
+                    ,{ty:"T", pts:[[100.0, 10, 0.2], [-100.0, -3, 0.2], [110.0, -13, 0.2]], mat:{ rgb:[1, 0, 0], kd:0.5, ks:0.7, nex:1}},
+                    {ty:"T", pts:[[-100.0, 10, 0.2], [100.0, 5, 0.2], [-70.0, -10, 0.2]], mat:{ rgb:[1, 0, 0], kd:0.5, ks:0.7, nex:1}}  // triangle 1
+
+                    // ==========  YOUR CODE : END   of task 1 ============================================
+
+
+                    , {ty:"S", mid: [-3.0, 2.5, 2], rad:2, mat:{ rgb:[0, 1, 0], kd:1.0, ks:0.0, nex:1                          }}  // sphere 1
+                    , {ty:"S", mid: [ 3.0, 2.5, 2], rad:2, mat:{ rgb:[0, 0, 1], kd:0.6, ks:0.6, nex:32                         }}  // sphere 2
+                    , {ty:"S", mid: [ 0.5, 0.7, 1], rad:1, mat:{ rgb:[1, 0, 0], kd:0.3, ks:0.7, nex:32 , ctf:cookTorranceCopper}}  // sphere 3
+
+
+                    // ##########  YOUR CODE : BEGIN of task 7 ############################################
+                    // Optional task: Place a tetrahedron (has 4 triangles) and a cube on the ground (in front of the spheres) 
+                    // as well as a shere on top of the small sphere.
+                    
+                    
+                    // ==========  YOUR CODE : END   of task 7 ============================================
+                ];
+        
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //
+        //  Calculations
+        //
+        
+        function cookTorranceCopper(aglDeg){
+        
+            // ##########  YOUR CODE : BEGIN of task 5 ############################################
+            // Hint1: returning the following constant RGB tripple is obviously not correct for Cook Torrance model
+            //        Replace the following code with your implementation.
+            // Hint2: In the slides curved functions are shown. You get already full points when you implement a linear approximation here.
+            //        For non-linear curves (similar to those in the slides) you may get more.
+
+            cookTorCopr = Math.cos(aglDeg/2);
+            return cookTorCopr
+            // return [colorRed]
+            // }
+            
+            return [0.7, 0.6, 0.3];
+
+            // ==========  YOUR CODE : END   of task 5 ============================================
+        
+        }
+        
+        function locRayOnTriCoo(x1, y1, z1, // triangle point1   
+                                x2, y2, z2, // triangle point1   
+                                x3, y3, z3, // triangle point1
+                                rx, ry, rz, // reference point of the ray  
+                                dx, dy, dz  // direction of the ray
+                               ){
+            let tux = x2-x1; let tuy = y2-y1; let tuz = z2-z1; // local u-direction of the triangle (from p1->p2)
+            let tvx = x3-x1; let tvy = y3-y1; let tvz = z3-z1; // local v-direction of the triangle (from p1->p3)
+            let a = dx*tvy - dy*tvx;
+            let b = dy*tvz - dz*tvy;
+            let c = dz*tvx - dx*tvz;
+            let d = (x1-rx)*tvy + (ry-y1)*tvx;
+            let e = (y1-ry)*tvz + (rz-z1)*tvy;
+            let f = (z1-rz)*tvx + (rx-x1)*tvz;
+            let g = tux*tvy-tuy*tvx;
+            let h = tuy*tvz-tuz*tvy;
+            let i = tuz*tvx-tux*tvz;
+
+            // We have 3 equations and 3 variables. Finally an intersection check for ray and triangle is: t>=0, u>0, v>0, u+v<1
+            //  rx + dx*t = x1 + u*tux + v*tvx  ->  t*(dx*tvy - dy*tvx) = (x1-rx)*tvy + (ry-y1)*tvx + u*(tux*tvy-tuy*tvx)   -> t*a = d + u*g
+            //  ry + dy*t = y1 + u*tuy + v*tvy  ->  t*(dy*tvz - dz*tvy) = (y1-ry)*tvz + (rz-z1)*tvy + u*(tuy*tvz-tuz*tvy)   -> t*b = e + u*h
+            //  rz + dz*t = z1 + u*tuz + v*tvz  ->  t*(dz*tvx - dx*tvz) = (z1-rz)*tvx + (rx-x1)*tvz + u*(tuz*tvx-tux*tvz)   -> t*c = f + u*i
+            
+            // We want to calc t -> using eq. 1 and 2 with multiplications does not work, but it is also not needed!
+            let t=0;
+            if      (g==0 && a!=0) t = d/a;
+            else if (h==0 && b!=0) t = e/b;
+            else if (i==0 && c!=0) t = f/c;
+            else {  // t*(a*h-b*g) = d*h-e*g;
+                let j = a*h-b*g;
+                if (j==0)
+                    return; // no intersection, direction of the ray and normal of the triangle are orthogonal (would give division by 0)
+                t = (d*h-e*g)/j;
+            } 
+
+            let u=0;
+            if      (g!=0) u = (t*a-d)/g;
+            else if (h!=0) u = (t*b-e)/h;
+            else if (i!=0) u = (t*c-f)/i;
+            else return; // u is undefined -> stopping here
+            
+            // to get v we have to divide by tvy, tvx or tvz -> we use the equation where the value is absolutely the greatest
+            // note: if all 3 are 0, then g, h and i are zero, then we would have no u, then we would not be here;-) 
+            let v = Math.abs(tvx)>Math.abs(tvy) ? (Math.abs(tvx)>Math.abs(tvz) ? (rx-x1+dx*t-u*tux)/tvx : (rz-z1+dz*t-u*tuz)/tvz) 
+                                                : (Math.abs(tvy)>Math.abs(tvz) ? (ry-y1+dy*t-u*tuy)/tvy : (rz-z1+dz*t-u*tuz)/tvz); 
+            return [u, v, t];
+        }
+        
+        function rayIntersectsTri(rp, rd, t1, t2, t3){
+            let d = locRayOnTriCoo(t1[0], t1[1], t1[2],  t2[0], t2[1], t2[2],  t3[0], t3[1], t3[2],  rp[0], rp[1], rp[2],  rd[0], rd[1], rd[2]);
+            if (!d)
+                return {hit:false};
+            let ret = {
+                        t:d[2],
+                        u:d[0],
+                        v:d[1],
+                        hit:true,
+                      }
+            if (d[2]<=1e-10 || d[0]<0 || d[1]<0 || d[0]+d[1]>1)  // t==0 would mean self reflection in recursive approaches
+                ret.hit=false;
+            else
+                ret.pt=addVec3(rp, sclVec3(rd, ret.t))
+            return ret;
+        }
+
+        function rayIntersectsSph(rp, rd, mid, r){ // parameters are: rayStartPoint, rayDirection, midOfSphere, radiusOfSphere
+        
+            // 1. project the mid of the sphere onto the ray 
+            let rn  = nrmVec3(rd);          // normalized ray direction
+            let toM = subVec3(mid, rp);     // vector from ray start point to the mid of the sphere
+            let len = dotVec3(toM, rn);     // signed distance between the projected mid point and the ray start
+            if (len < 0) // behind?         // negative values show, that the ray does not hit the sphere
+                return {hit:false};         // yes, wrong direction of the ray! -> no hit
+            let prj = addVec3(rp, sclVec3(rn, len));    // the sphere mid point projected onto the ray
+            
+            // 2. compare the distance between the projection prj and the mid with the sphere radius
+            let dif = distVec3(mid, prj);
+            if (dif >= r)
+                return {hit:false}; // no intersection, because distance from mid point to ray is larger than the radius (or equal)
+            
+            // 3. calc the hit point and the distance bewteen the hit point and the ray start point
+            let ofs = Math.sqrt(r*r-dif*dif);   // the offset we have to go from the projection point to the hitpoint (towards the begin of the ray)
+            let hpt = addVec3(prj, sclVec3(rn, -ofs));
+            let dst = distVec3(hpt, rp);
+            return {hit:true, pt:hpt, t:dst};
+        }
+        
+        function calcNormal(obj, pt){   // obj was hit by the ray, and pt is the hit point
+            switch(obj.ty){             // according to the type of object we have to calculate the object normal in the hit point
+                case "T":
+                    let t=obj.pts;
+                    let v12 = subVec3(t[1], t[0]);   // local u-direction of the triangle (from p1->p2)
+                    let v13 = subVec3(t[2], t[0]);   // local v-direction of the triangle (from p1->p3)
+                    return nrmVec3(crossProd(v12, v13));
+
+                case "S":
+                    // ##########  YOUR CODE : BEGIN of task 3 ############################################
+                    // Calc the normal of the sphere in point pt and return it.
+                    // Note: using the z direction as normal is obviously wrong -> replace the following code! 
+                    return sclVec3(pt,5);
+                   // return [0,0,1]; 
+                    
+                    // ==========  YOUR CODE : END   of task 3 ============================================
+            }
+        }
+        
+        function addVec3(a, b){ return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; } // addition    of 2 vectors a and b,  returns a+b
+        function subVec3(a, b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; } // subtraction of 2 vectors a and b,  returns a-b
+        function sclVec3(a, s){ return [a[0]*s   , a[1]*s   , a[2]*s   ]; } // scaling of vector a with scalar s, returns a*s
+        function dotVec3(a, b){ return  a[0]*b[0]+ a[1]*b[1]+ a[2]*b[2] ; } // dot product of 2 vectors a and b,  returns a.b
+
+        // ##########  YOUR CODE : BEGIN of task 2 ############################################
+        // Complete/correct following functions... With a correct distVec3 function spheres should become visible in the scene.
+        // Hint: You may combine some of the above functions or write your own code here.
+        
+        function distVec3(a, b){ 
+            let deltaX = a[0] - b[0];
+            let deltaY = a[1] - b[1];
+            let deltaZ = a[2] - b[2];
+            return Math.sqrt
+            (
+                deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ
+            )
+            
+           // return 100; 
+        }   // distance between the two points a and b
+        function oppoVec3(a   ){             }    // opposite vector
+
+        // ==========  YOUR CODE : END   of task 2 ============================================
+
+        function nrmVec3(a){                                                // normalization of vector a       ,  returns a with lenght=1
+            let l = Math.sqrt(a[0]*a[0]+a[1]*a[1]+a[2]*a[2]);
+            return l==0 ? a : [a[0]/l, a[1]/l, a[2]/l];
+        }
+        function lenVec3(a){ return Math.sqrt(a[0]*a[0] + a[1]*a[1] + a[2]*a[2]); } // calculation of the length of vector a
+        
+        function crossProd(vec1, vec2){ // cross product of 2 vectors
+            return [vec1[1] * vec2[2] - vec1[2] * vec2[1],
+                    vec1[2] * vec2[0] - vec1[0] * vec2[2],
+                    vec1[0] * vec2[1] - vec1[1] * vec2[0]];
+        }
+
+        function hypot(dx, dy){
+            return Math.sqrt(dx*dx+dy*dy);
+        }
+        
+        function rnd2(v){ return rnd(v, 2); }
+        
+        function rnd(v, d){
+            let f=1; let n=d; while (n-- > 0) f*=10;
+            let r=""+((f*v+(v<0?-0.5:0.5))|0)/f;
+            if (r.indexOf(".")<0)
+                r+=".";
+            n = d-(r.length-r.indexOf(".")-1);
+            while (n-- >0)
+                r+="0";
+            return r;
+        }
+        
+        function limVal(v, mi, ma){
+            v*=1; return v<=mi ? mi : (v>=ma ? ma : v);
+        }
+        
+        function setCanvasSizeWxH(wxh){
+            const mtcWxh = wxh.match(/^([0-9]+)x([0-9]+)$/);
+            if (!mtcWxh)
+                wxh = imgSize;
+            let cnv = document.getElementById("theCanvas");
+            if (cnv){
+                 cnv.width  = +mtcWxh[1];
+                 cnv.height = +mtcWxh[2];
+            
+            }            
+            return wxh;
+        }
+        
+        var hexDigits = "0123456789ABCDEF";
+        function hex2(v01){
+            let v=limVal(v01*256,0,255)|0;
+            return hexDigits.charAt(v/16)+hexDigits.charAt(v%16);
+        }
+        
+        function hexColorStr(r,g,b){
+            return "#"+hex2(r)+hex2(g)+hex2(b);
+        }
+        
+        function calcBgColor(){
+            return hexColorStr(0.9, 0.8, 0);
+            // let k1=1.9;
+            // let su = materR + materG + materB;
+            // return (su<2.9) ? "white" // dark enough -> use default
+            //               : hexColorStr(k1-materR, k1-materG, k1-materB); // invert near white
+        }
+        
+        function swapVis(but, idElem){
+            let doShowNow = false;
+            if (but){
+                let txt = but.innerHTML; 
+                if      (txt=="[hide]") { but.innerHTML = "[show]"; doShowNow = false; }
+                else if (txt=="[show]") { but.innerHTML = "[hide]"; doShowNow = true;  }
+            }
+            let elm = document.getElementById(idElem);
+            if (elm)
+                elm.style.display = doShowNow ? "initial" : "none";
+        }
+        
+        function getPosXY_OmS(el) { // Such a function is usefull, if the canvas is part of 
+            var xPos = 0;           // a complex html page with scrolled elements.
+            var yPos = 0;
+            while(el) {
+                xPos += el.offsetLeft - el.scrollLeft; //  + el.clientLeft;
+                yPos += el.offsetTop  - el.scrollTop ; //  + el.clientTop ;
+                el = el.offsetParent;
+            }
+            return [ xPos-pageXOffset, yPos-pageYOffset];
+        }
+
+        function getEventPosXY(ev, el) {
+            var posXY = getPosXY_OmS(el); 
+            return [              ev.clientX - posXY[0],
+                     el.height - (ev.clientY - posXY[1])];
+        }
+
+        var ignoreInpChg = false;
+        function handleInputChg(){
+            if (ignoreInpChg)
+                return;
+            // read current values and ensure that they did not left their range
+            let inp; 
+            inp = document.getElementById("light1R" ); if (inp) light1.RGB[0]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("light1G" ); if (inp) light1.RGB[1]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("light1B" ); if (inp) light1.RGB[2]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("light2R" ); if (inp) light2.RGB[0]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("light2G" ); if (inp) light2.RGB[1]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("light2B" ); if (inp) light2.RGB[2]=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieR"  ); if (inp) ambieR       =limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieG"  ); if (inp) ambieG       =limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieB"  ); if (inp) ambieB       =limVal(inp.value, 0,  1);    
+
+            inp = document.getElementById("light1On"); if (inp) light1.on    =inp.checked;    
+            inp = document.getElementById("light2On"); if (inp) light2.on    =inp.checked;    
+            inp = document.getElementById("ambieOn" ); if (inp) ambieOn      =inp.checked;
+            inp = document.getElementById("cookTOn" ); if (inp) cookTOn      =inp.checked;    
+            inp = document.getElementById("shadowOn"); if (inp) shadowOn     =inp.checked;    
+           
+            inp = document.getElementById("imgSize"     ); if (inp) imgSize      =setCanvasSizeWxH(inp.value);    
+
+            valuesToInpts(); // may be we had to map a value into its limits -> updating now all
+            redraw();   
+        }
+        
+        function valuesToInpts(){
+            // Write the current values in the inputs.
+            ignoreInpChg = true;
+            let inp;
+            inp = document.getElementById("light1R" ); if (inp) inp.value = light1.RGB[0];   
+            inp = document.getElementById("light1G" ); if (inp) inp.value = light1.RGB[1];   
+            inp = document.getElementById("light1B" ); if (inp) inp.value = light1.RGB[2];   
+            inp = document.getElementById("light2R" ); if (inp) inp.value = light2.RGB[0];   
+            inp = document.getElementById("light2G" ); if (inp) inp.value = light2.RGB[1];   
+            inp = document.getElementById("light2B" ); if (inp) inp.value = light2.RGB[2];   
+            inp = document.getElementById("ambieR"  ); if (inp) inp.value = ambieR;   
+            inp = document.getElementById("ambieG"  ); if (inp) inp.value = ambieG;   
+            inp = document.getElementById("ambieB"  ); if (inp) inp.value = ambieB;   
+            
+            inp = document.getElementById("light1On"); if (inp) inp.checked = light1.on;    
+            inp = document.getElementById("light2On"); if (inp) inp.checked = light2.on;    
+            inp = document.getElementById("ambieOn" ); if (inp) inp.checked = ambieOn  ;    
+            inp = document.getElementById("cookTOn" ); if (inp) inp.checked = cookTOn  ;    
+            inp = document.getElementById("shadowOn"); if (inp) inp.checked = shadowOn ;    
+
+            inp = document.getElementById("imgSize"     ); if (inp) inp.value = imgSize;   
+
+            ignoreInpChg = false;
+
+            // show colors in visual color example rect
+            inp = document.getElementById("ambieX" ); if (inp) inp.style.backgroundColor=hexColorStr(ambieR       , ambieG       , ambieB       );
+            inp = document.getElementById("light1X"); if (inp) inp.style.backgroundColor=hexColorStr(light1.RGB[0], light1.RGB[1], light1.RGB[2]);
+            inp = document.getElementById("light2X"); if (inp) inp.style.backgroundColor=hexColorStr(light2.RGB[0], light2.RGB[1], light2.RGB[2]);
+        }
+        
+        function handleDown(ev, cnv){
+            if (window.event)
+                ev = window.event; // e.g. for old IE
+            
+            var posXY = getEventPosXY(ev, cnv); 
+            
+            var mX = posXY[0];
+            var mY = posXY[1];
+        }
+        
+        function handleUp(ev, cnv){
+        }
+        
+        function handleMove(ev, cnv){
+
+            if (window.event)
+                ev = window.event; // e.g. for old IE
+
+            let posXY = getEventPosXY(ev, cnv); 
+            let mX = posXY[0];
+            let mY = posXY[1];
+        }
+        
+        function calcRgbForPixel(xPix, yPix, cnv){
+            let x01 = (xPix+.5)/cnv.width;
+            let y01 = (yPix+.5)/cnv.height;
+            
+            // 1. calc pixel position in world coordinates based on camera.xyz, camera.dir
+            let d  = 1; 
+            let ox = 2;
+            let oy = ox*cnv.height/cnv.width; 
+            let camUp  = [0, 0, 1];
+            let camRgt = crossProd(camera.dir, camUp);
+            
+            let px = camera.xyz[0] + camera.dir[0]*d + camRgt[0]*(x01-0.5)*ox + camUp[0]*(y01-0.5)*oy;
+            let py = camera.xyz[1] + camera.dir[1]*d + camRgt[1]*(x01-0.5)*ox + camUp[1]*(y01-0.5)*oy;
+            let pz = camera.xyz[2] + camera.dir[2]*d + camRgt[2]*(x01-0.5)*ox + camUp[2]*(y01-0.5)*oy;
+            
+            // 2. send the ray into the scene
+            let rayDir = nrmVec3([px-camera.xyz[0], py-camera.xyz[1], pz-camera.xyz[2]]);
+        
+            return calcRgbForRay( camera.xyz, rayDir, 0 );
+        }
+
+        function shadowRayFails(rayPnt, rayDir, dst){
+            
+            // ##########  YOUR CODE : BEGIN of task 6 ############################################
+            // Fill the function shadowRayFails with the code for a shadow ray test.
+            // The parameter dst is the distance from the material point (coorinates are in rayPnt) to the light, 
+            // to which we send the shadow ray (starting at the material point).
+            // If rayIntersectsTri or rayIntersectsSph detect a hit which is nearer than the given dst parameter, then the
+            // function must return true (the point is in the shadow of the hit object).
+            // Hints: This code is quite similar to the hit tests at the begin of function calcRgbForRay(rayPnt, rayDir).
+            //        You may simply copy/paste and adapt the code as needed - it could be less than 10 lines of code. 
+            
+            for (let io=0; io<objs.length; io++){
+                let obj = objs[io];
+                let hit = obj.ty=="T" ? rayIntersectsTri(rayPnt, rayDir, obj.pts[0], obj.pts[1], obj.pts[2])
+                                      : rayIntersectsSph(rayPnt, rayDir, obj.mid,    obj.rad               );
+                if(hit.hit){
+                    if(Math.abs(dst - hit.t)){
+                        return true;
+                    }
+                    else return false; 
+                    
+                }
+            }
+            
+            // ==========  YOUR CODE : END   of task 6 ============================================
+            return false;
+        }
+
+        function calcRgbForRay(rayPnt, rayDir){
+            let tMin = Number.MAX_VALUE;
+            let rHit;
+            let rObj;
+            
+            for (let io=0; io<objs.length; io++){
+                let obj = objs[io];
+                let hit = obj.ty=="T" ? rayIntersectsTri(rayPnt, rayDir, obj.pts[0], obj.pts[1], obj.pts[2])
+                                      : rayIntersectsSph(rayPnt, rayDir, obj.mid,    obj.rad               );
+                if (!hit.hit || hit.t>=tMin)
+                    continue;
+                tMin = hit.t;
+                rHit = hit;
+                rObj = obj;
+            }
+
+            if (!rHit)
+                return [ambieR, ambieG, ambieB, sclVec3(rayDir, 10000)]; 
+                              
+            let mat  = rObj.mat;
+            let matR = mat.rgb[0];
+            let matG = mat.rgb[1];
+            let matB = mat.rgb[2];
+
+            let phgR = 0;
+            let phgG = 0;
+            let phgB = 0;
+            
+            if (ambieOn){
+                phgR += matR*ambieR*mat.kd;
+                phgG += matG*ambieG*mat.kd;
+                phgB += matB*ambieB*mat.kd;
+            }
+
+            let hitP = rHit.pt;
+            let nrmM = calcNormal(rObj, hitP);
+            
+            if (light1.on){
+                // calculate cosA
+                let vecL = subVec3(light1.xyz, hitP);    // vector from hitP to light1.xyz
+                let nrmL = nrmVec3(vecL);                // normalized vector for vecL 
+                let cosA = dotVec3(nrmL, nrmM);
+                if (cosA>0 && (!shadowOn || !shadowRayFails(hitP, nrmL, lenVec3(vecL)))){
+
+                    if (mat.ctf && cookTOn){
+                        let rgbCT = mat.ctf(Math.acos(cosA));
+                        matR = rgbCT[0];
+                        matG = rgbCT[1];
+                        matB = rgbCT[2];
+                    }
+                
+                    // calculate cosT
+                    let vecV = subVec3(rayPnt, hitP);
+                    let nrmV = nrmVec3(vecV); 
+                    let vecR = subVec3(sclVec3(nrmM, cosA*2), nrmL);
+                    let nrmR = nrmVec3(vecR); // may be already ok
+                    let cosT = dotVec3(nrmV, nrmR);
+
+                    // calculate reflection from light1
+                    let refl = mat.kd*cosA + mat.ks*Math.pow(Math.max(cosT,0), mat.nex);
+
+                    phgR += matR*light1.RGB[0]*refl;
+                    phgG += matG*light1.RGB[1]*refl;
+                    phgB += matB*light1.RGB[2]*refl;
+                }
+            }
+            
+            // ##########  YOUR CODE : BEGIN of task 4 ############################################
+            // Include the second light into the calculations of the phong lighting model.
+
+            
+            // ==========  YOUR CODE : END   of task 4 ============================================
+
+            return [phgR, phgG, phgB, hitP];
+        }
+      
+        function redraw(cnv){
+            cnv || (cnv = document.getElementById("theCanvas"));
+            if (!cnv)
+                return;
+            var ctx = cnv.getContext("2d");
+            if (!ctx)
+                return;
+
+            // draw the pixels
+            ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0); // set identity matrix
+                let begTime = new Date();
+                let imgData = ctx.createImageData(cnv.width, cnv.height);
+                let iPtr=0;
+                for (let y=cnv.height-1; y>=0; y--){
+                    currY=y;
+                    for (let x=0; x<cnv.width; x++){
+                        currX=x;
+                        let rgb = false ? [x/cnv.width, y/cnv.height, 1-x*y/cnv.width/cnv.height]
+                                       : calcRgbForPixel(x, y, cnv);
+                          imgData.data[iPtr++] = rgb[0]*255;
+                          imgData.data[iPtr++] = rgb[1]*255;
+                          imgData.data[iPtr++] = rgb[2]*255;
+                          imgData.data[iPtr++] = 255;
+                    }
+                }
+                ctx.putImageData(imgData, 0, 0); // saves 20..25% compared to fill an rect area
+                console.log("Calculation of "+imgSize+" took "+(new Date()-begTime)+"ms.")
+
+            ctx.restore(); 
+        }
+        
+        function initScene(){
+            // code placed here will be executed when the html-page is loaded completely
+            setCanvasSizeWxH(imgSize);
+            valuesToInpts();
+            redraw();
+            // ... 
+        }
+        
+    </script>
+</head>
+<body onload="initScene()">
+    <h2>Graded Assignment 2: "Ray Tracing Scene"-skeleton</h2>
+    <hr>
+    <b>Introduction <span onclick="swapVis(this, 'intro');">[hide]</span></b><br>
+    <div id="intro">
+        This assignment is a continuation of the work in exercise 4-1. 
+        In the current assignment the solution is to be extended according to the aspects:
+        <ol>
+            <li>showing more objects/lights in the scene,</li>
+            <li>Cook-Torrance support,</li>
+            <li>shadows, and</li>
+            <li>optionally recursive raytracing.</li>
+        </ol>
+        
+        Follow the instructions below. Once completed, submit your solution here in Moodle. <br>
+        <div style="border:solid 1px black; padding:4px; border-radius:7px;background-color:#EEEEEE; margin-top:10px">
+            <b>Note:</b>
+            With submission of your solution, you confirm that you submit <b>your own work</b>. 
+            We will automatically run <b>duplicate scanner</b> and other measures over your submissions. 
+            If we have reasons to believe that you shared or did not submit your own work, we consider 
+            it as attempted fraud. In this case your (and the related) submission(s) will be 
+            <b>graded zero points</b> and we reserve additional measures!
+        </div>
+    </div>
+    <br>
+    <b>General hints: <span onclick="swapVis(this, 'hints');">[hide]</span></b><br>
+    <div id="hints">
+        <ul>
+            <li>In the source code of the given program skeleton you will find marks starting with<br>
+                <b><i><code>##########  YOUR CODE : BEGIN of task</code></i></b><br>
+                and<br>
+                <b><i><code>==========  YOUR CODE : END of task</code></i></b><br>
+                followed by the according task number.
+                Insert your code for the solution of the according task between these marks.
+                <span style="background-color:#EEDD10">Do not remove these marks!</span>
+                </li>
+            <li>Use the approaches presented in the course. If you implement other approaches, 
+                then <b>explain it explicitely</b> in the comments aside your implementation 
+                and supply a link to an according scientific source.</li>
+            <li>Write <b>your own code</b> with <b>your comments</b> and your variable names.</li>
+            <li>Do not use libraries for the calculations! 
+                Writing own functions, use of the <code>Math</code> class, and use of functions provided in the HTML-skeleton is of course allowed.</li>
+            <li>It is possible to get full marks without solving <b>optional tasks</b>. 
+                Nevertheless if you have time, feel free to solve optional tasks too. 
+                This opens the possibility of getting additional points.</li>
+            <li>You may start now with some interactions like switching lights on/of or changing colors. Note: using larger image size
+                will cost much more calculation time. You can simply reload the page to come back to small sizes.</li>
+        </ul>
+    </div>
+    
+     <hr>
+    <div style="display: flex; justify-content: center;">
+        <div style="padding-right:10px; display:inline-block; width:500px">
+            <b>Current parameter values</b><br>
+            light1 &nbsp; &nbsp;
+            R:<input id="light1R" type="number" value="1.0" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="light1G" type="number" value="0.8" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="light1B" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            <span id="light1X" class="rgbEx">rgb</span> 
+            <input type="checkbox" id="light1On" oninput="handleInputChg()" checked>
+            <label for="light1On">on</label><br>
+            
+            light2 &nbsp; &nbsp;
+            R:<input id="light2R" type="number" value="1.0" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="light2G" type="number" value="0.8" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="light2B" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            <span id="light2X" class="rgbEx">rgb</span> 
+            <input type="checkbox" id="light2On" oninput="handleInputChg()" checked>
+            <label for="light2On">on</label><br>
+            
+            ambient
+            R:<input id="ambieR" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="ambieG" type="number" value="0.2" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="ambieB" type="number" value="0.3" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            <span id="ambieX" class="rgbEx">rgb</span> 
+            <input type="checkbox" id="ambieOn" oninput="handleInputChg()" checked>
+            <label for="ambieOn">on</label><br>
+            
+            WxH:<select id="imgSize" onchange="handleInputChg()">
+                <option value="2048x1024"         >2048x1024</option>
+                <option value="1024x512"          >1024x512 </option>
+                <option value= "512x256"          > 512x256 </option>
+                <option value= "256x128"  selected> 256x128 </option>
+                <option value= "128x64"           > 128x64  </option>
+            </select><br>
+            
+            <input type="checkbox" id="cookTOn" oninput="handleInputChg()" checked>
+            <label for="cookTOn">Cook Torrance on</label><br>
+            
+            <input type="checkbox" id="shadowOn" oninput="handleInputChg()" checked>
+            <label for="shadowOn">shadows on</label><br>
+        </div>
+        <div style="display:inline-block">
+            <canvas id="theCanvas" width="256px" height="128px"
+                  onmousedown="handleDown(event, this);"
+                  onmouseup  ="handleUp  (event, this);"
+                  onmousemove="handleMove(event, this);"
+                  style="border:black solid 1px;" ></canvas>
+        </div>
+    </div>
+    <div style="clear: both;">
+        <hr>
+        <b>Your tasks:</b> 
+        <ol>
+            <li>Add 2 triangles (which form in sum a rectangle) for the ground. All their points have z=0.2 
+                The color of the ground must be a maximally saturated red. 
+                Chose the x and y coorinates in a way, that in the given camera view the ground seems to be endless.</li> 
+            <li>Complete/correct following functions (similar to addVec3 etc):
+                <ul>
+                    <li><code>function distVec3(a, b){ ... }</code> that returns the distance between the 2 points a and b.</li>
+                    <li><code>function oppoVec3(a){ ... }</code> that returns the vector with the opposite direction of vector a (the sum of both is the null vector).</li>
+                </ul></li>
+            <li>Write the correct code for the normal calculation for the sphere in the <code>function calcNormal</code>.</li>
+            <li>Include the second light into the calculations of the phong lighting model.</li> 
+            <li>Fill the <code>function cookTorranceCopper(agl)</code> with code which implements the Cook Torrance approach as described in the lecture slides.</li>
+            <li>Fill the <code>function shadowRayFails</code> with the code for a shadow ray test.</li>
+            <li>Optional task: Place a tetrahedron (it has 4 triangles) and a cube on the ground (in front of the spheres) as well as a shere on top of the small sphere.</li>
+            <li>Optional task: Implement recursive raytracing. To prove the results use 2 mirrors in the scene as shown in lecture slide V4-1:12.<br>
+                Note: There are no predefined marks for code belonging to this more complex task. The visual result in the browser canvas is here more
+                important than the code.</li>
+        </ol>
+    </div>
+</body>
+</html>

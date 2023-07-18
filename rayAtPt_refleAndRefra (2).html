@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <script>
+        var showRays = true;
+        var light1 = {"x":110, "y":210, "id":"Lgt1", "color":"black"};  // the position of the light (begin of the ray)
+        var matBeg = {"x":  0, "y":100, "id":"MatL", "color":"black"};  // the "begin" of the material line
+        var matEnd = {"x":400, "y":120, "id":"MatR", "color":"black"};  // the "end"   of the material line
+        var matPt1 = {"x":350, "y":320, "id":"MatP", "color":"black"};  // the "thePt" on the material line
+        var cam1   = {"x":280, "y":250, "id":"Cam1", "color":"black"};  // the position of the camera
+        var pts = [light1, matBeg, matEnd, matPt1, cam1]; // array of pickable/draggable/drawable points
+
+        var outEnd = {"x":200, "y":200};    // the end point of the out going ideal reflected ray
+        var nrmEnd = {"x":200, "y":200};    // the end point of the material normal
+        var rfrEnd = {"x":200, "y":200};    // the end point of the refracted ray T in material B
+        
+        // RGB of light L1
+        var lightR = 1.0;
+        var lightG = 0.8;
+        var lightB = 0.1;
+        
+        // RGB for ambient light
+        var ambieR = 0.1;
+        var ambieG = 0.2;
+        var ambieB = 0.3;
+        
+        // RGB of the material in point P
+        var materR = 0.7;
+        var materG = 0.4;
+        var materB = 1.0;
+        // shininess exponent of the material in point P
+        var nMat   = 8.0;
+        
+        // refraction indices
+        var etaF   = 1.0;   // medium F
+        var etaB   = 1.6;   // medium B
+        
+        var strokeLength = 100;
+        var epPointRadius =  6;  // radius for drawing points 
+        var epDragRadius  = 12;  // radius for picking/dragging pooints
+        var currDragPt = null;  
+        
+        function hypot(dx, dy){
+            return Math.sqrt(dx*dx+dy*dy);
+        }
+        
+        function rnd(v, d){
+            let f=1; let n=d; while (n-- > 0) f*=10;
+            let r=""+((f*v+(v<0?-0.5:0.5))|0)/f;
+            if (r.indexOf(".")<0)
+                r+=".";
+            n = d-(r.length-r.indexOf(".")-1);
+            while (n-- >0)
+                r+="0";
+            return r;
+        }
+        
+        function limVal(v, mi, ma){
+            v*=1; return v<=mi ? mi : (v>=ma ? ma : v);
+        }
+        
+        var hexDigits = "0123456789ABCDEF";
+        function hex2(v01){
+            let v=limVal(v01*256,0,255)|0;
+            return hexDigits.charAt(v/16)+hexDigits.charAt(v%16);
+        }
+        
+        function hexColorStr(r,g,b){
+            return "#"+hex2(r)+hex2(g)+hex2(b);
+        }
+        
+        function calcBgColor(){
+            let k1=1.9;
+            let su = materR + materG + materB;
+            return (su<2.9) ? "white" // dark enough -> use default
+                          : hexColorStr(k1-materR, k1-materG, k1-materB); // invert near white
+        }
+        
+        function swapVis(but, idElem){
+            let doShowNow = false;
+            if (but){
+                let txt = but.innerHTML; 
+                if      (txt=="[hide]") { but.innerHTML = "[show]"; doShowNow = false; }
+                else if (txt=="[show]") { but.innerHTML = "[hide]"; doShowNow = true;  }
+            }
+            let elm = document.getElementById(idElem);
+            if (elm)
+                elm.style.display = doShowNow ? "initial" : "none";
+        }
+        
+        function getPickedPt(mX, mY){  // takes simply the first pointwhich is near enough
+            for (var idx=0; idx<pts.length; idx++)
+                if (hypot(pts[idx].x-mX, pts[idx].y-mY)<epDragRadius)
+                    return pts[idx];
+            return null;
+        }
+        
+        function getPosXY_OmS(el) { // Such a function is usefull, if the canvas is part of 
+            var xPos = 0;           // a complex html page with scrolled elements.
+            var yPos = 0;
+            while(el) {
+                xPos += el.offsetLeft - el.scrollLeft; //  + el.clientLeft;
+                yPos += el.offsetTop  - el.scrollTop ; //  + el.clientTop ;
+                el = el.offsetParent;
+            }
+            return [ xPos-pageXOffset, yPos-pageYOffset];
+        }
+
+        function getEventPosXY(ev, el) {
+            var posXY = getPosXY_OmS(el); 
+            return [              ev.clientX - posXY[0],
+                     el.height - (ev.clientY - posXY[1])];
+        }
+
+        var ignoreInpChg = false;
+        function handleInputChg(){
+            if (ignoreInpChg)
+                return;
+            // read current values and ensure that they did not left their range
+            let inp; 
+            inp = document.getElementById("lightR"); if (inp) lightR=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("lightG"); if (inp) lightG=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("lightB"); if (inp) lightB=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieR"); if (inp) ambieR=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieG"); if (inp) ambieG=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("ambieB"); if (inp) ambieB=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("materR"); if (inp) materR=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("materG"); if (inp) materG=limVal(inp.value, 0,  1);    
+            inp = document.getElementById("materB"); if (inp) materB=limVal(inp.value, 0,  1); 
+            inp = document.getElementById("nMat"  ); if (inp) nMat  =limVal(inp.value, 1,128); 
+            inp = document.getElementById("etaF"  ); if (inp) etaF  =limVal(inp.value, 0, 10); 
+            inp = document.getElementById("etaB"  ); if (inp) etaB  =limVal(inp.value, 0, 10); 
+            valuesToInpts(); // may be we had to map a value into its limits -> updating now all
+            redraw();   
+        }
+        
+        function valuesToInpts(){
+            // Write the current values in the inputs.
+            ignoreInpChg = true;
+            let inp;
+            inp = document.getElementById("lightR"); if (inp) inp.value = lightR;   
+            inp = document.getElementById("lightG"); if (inp) inp.value = lightG;   
+            inp = document.getElementById("lightB"); if (inp) inp.value = lightB;   
+            inp = document.getElementById("ambieR"); if (inp) inp.value = ambieR;   
+            inp = document.getElementById("ambieG"); if (inp) inp.value = ambieG;   
+            inp = document.getElementById("ambieB"); if (inp) inp.value = ambieB;   
+            inp = document.getElementById("materR"); if (inp) inp.value = materR;   
+            inp = document.getElementById("materG"); if (inp) inp.value = materG;   
+            inp = document.getElementById("materB"); if (inp) inp.value = materB;   
+            inp = document.getElementById("nMat"  ); if (inp) inp.value = nMat  ;   
+            inp = document.getElementById("etaF"  ); if (inp) inp.value = etaF  ;   
+            inp = document.getElementById("etaB"  ); if (inp) inp.value = etaB  ;   
+            ignoreInpChg = false;
+        }
+        
+        function handleDown(ev, cnv){
+            if (window.event)
+                ev = window.event; // e.g. for old IE
+            
+            var posXY = getEventPosXY(ev, cnv); 
+            
+            var mX = posXY[0];
+            var mY = posXY[1];
+            currDragPt = getPickedPt(mX, mY);
+        }
+        
+        function handleUp(ev, cnv){
+            currDragPt=null;
+        }
+        
+        function handleMove(ev, cnv){
+
+            if (window.event)
+                ev = window.event; // e.g. for old IE
+
+            var posXY = getEventPosXY(ev, cnv); 
+            var mX = posXY[0];
+            var mY = posXY[1];
+
+            if (!currDragPt)
+                return;
+
+            if (currDragPt.id=="Lgt1" || currDragPt.id=="Cam1")
+                currDragPt.x = mX;
+            currDragPt.y = mY;
+            
+            redraw(cnv);
+        }
+        
+        function angleNL_inDegreeIs(v){
+            let inp = document.getElementById("aglNL"); if (inp) inp.innerHTML=rnd(v,1);
+            //console.log("aglNL:"+v);
+        }
+        
+        function angleRV_inDegreeIs(v){
+            let inp = document.getElementById("aglRV"); if (inp) inp.innerHTML=rnd(v,1);
+            // console.log("aglRV:"+v);
+        }
+        
+        function angleBe_inDegreeIs(v){
+            let inp = document.getElementById("aglBe"); if (inp) inp.innerHTML=rnd(v,1);
+            // console.log("aglBe:"+v);
+        }
+        
+        function subMixColor_rgb_0to1(r, g, b){
+            let v = rnd(r,2)+"|"+rnd(g,2)+"|"+rnd(b,2);
+            let c = hexColorStr(r, g, b);
+            let inp = document.getElementById("subMx"); if (inp) inp.innerHTML=v;
+                inp = document.getElementById("subMc"); if (inp) inp.style.backgroundColor=c;
+            // console.log("subMx:"+v);
+        }
+        
+        function phongColor_rgb_0to1(r, g, b){
+            let v = rnd(r,2)+"|"+rnd(g,2)+"|"+rnd(b,2);
+            let c = hexColorStr(r, g, b);
+            let inp = document.getElementById("phgMx"); if (inp) inp.innerHTML=v;
+                inp = document.getElementById("phgMc"); if (inp) inp.style.backgroundColor=c;
+            // console.log("phong:"+v);
+        }
+        
+        function phongColor2_rgb_0to1(r, g, b){
+            let v = rnd(r,2)+"|"+rnd(g,2)+"|"+rnd(b,2);
+            let c = hexColorStr(r, g, b);
+            let inp = document.getElementById("phgOx"); if (inp) inp.innerHTML=v;
+                inp = document.getElementById("phgOc"); if (inp) inp.style.backgroundColor=c;
+            // console.log("phong2:"+v);
+        }
+        
+        function totalReflectionDetected(v){
+            let inp = document.getElementById("totRe"); if (inp) inp.innerHTML=v;
+            // console.log("totRe:"+v);
+        }
+        
+        function doCalc(){
+            // update the position of P (in the middle of both end points)
+            matPt1.x=(matBeg.x+matEnd.x)/2;
+            matPt1.y=(matBeg.y+matEnd.y)/2;
+            
+            // a) direction of the material line
+            let mDx = matEnd.x-matBeg.x;
+            let mDy = matEnd.y-matBeg.y;
+            let len = hypot(mDx, mDy);
+            mDx/=len;
+            mDy/=len;
+            
+            // b) normal direction of the material (mDx,mDy is rotated by 90 degree)
+            let nDx = -mDy;
+            let nDy =  mDx;
+            nrmEnd.x = matPt1.x + nDx*strokeLength;    // store the end point of the normal
+            nrmEnd.y = matPt1.y + nDy*strokeLength;
+            
+            // c) direction of the ray L from P to L1
+            let lDx = light1.x-matPt1.x;
+            let lDy = light1.y-matPt1.y;
+            len = hypot(lDx, lDy);
+            lDx/=len;
+            lDy/=len;
+            
+            // d) length of projection of L(lDx,lDy) onto the material normal and check, 
+            //    if rays are to be shown
+            let cosA = lDx*nDx+lDy*nDy;     // scalar product gives the length
+            showRays = cosA>0;              // do not show the rays, if the light is on the  
+                                            // backside (i.e. cosA has negative value)
+            
+            
+            // e) direction of the outgoing (ideally reflected) ray
+            let oDx  = 2*nDx*cosA - lDx;       
+            let oDy  = 2*nDy*cosA - lDy;
+            outEnd.x = matPt1.x + oDx*strokeLength;     // store the end point of the out 
+            outEnd.y = matPt1.y + oDy*strokeLength;     // going ray (ideal reflection)
+
+            
+            
+            // ##########  YOUR CODE : BEGIN of task 1 ############################################
+            // f) angle(N, L) : incoming angle
+            //    hint: the cosinus of this angle was already calculated above;-)
+            let x = Math.acos(cosA) * (180 / Math.PI)
+            angleNL_inDegreeIs(x);
+
+            // ==========  YOUR CODE : END   of task 1 ============================================
+            
+ 
+ 
+            // ##########  YOUR CODE : BEGIN of task 2 ############################################
+            // g) angle(R, V) : angle between the ideal reflection direction R and the direction 
+            //                  to the camera V
+            //    hint: here you should first calculate the direction from point P (coordinates are
+            //          stored in matPt1) to the camera V (coordinates are stored in cam1)
+            var campos_x = cam1.x - matPt1.x;
+            var campos_y = cam1.y - matPt1.y;
+            let camlen = hypot(campos_x,campos_y);
+            campos_x/= camlen;
+            campos_y/= camlen;
+            //var refpos_x = oDx - matPt1.x;
+            //var refpos_y = oDy - matpt1.y;
+            let cosRV = campos_x * oDx + campos_y * oDy;
+            let angleIndegreeRV = cosRV * (180 / Math.PI);
+
+            angleRV_inDegreeIs(angleIndegreeRV);
+            // ==========  YOUR CODE : END   of task 2 ============================================
+            
+            
+            // assign colors from the inputs to some points to show their current color later
+            light1.color = hexColorStr(lightR, lightG, lightB); // RGB-values of light L1
+            matBeg.color = hexColorStr(materR, materG, materB); // RGB-values of material color 
+            matEnd.color = matBeg.color
+            matPt1.color = matBeg.color
+            
+            
+            
+            // ##########  YOUR CODE : BEGIN of task 3 ############################################
+            // h) subtractive broadband color mix at P
+            //    hint: in the calulation the current values of lightR, lightG, lightB,
+            //                                       as well as materR, materG, materB
+            //          should be used
+            let colorR = (lightR * materR)
+            let colorG = (lightG * materG)
+            let colorB = (lightB * materB)
+            subMixColor_rgb_0to1(colorR,colorG,colorB)
+            
+            // ==========  YOUR CODE : END   of task 3 ============================================
+            
+            
+            
+            // ##########  YOUR CODE : BEGIN of task 4 ############################################
+            // i) Phong lighting model
+            //    hint: according to the given formula, you have to use in your calculations:
+            //      - nMat as shininess exponent
+            //      - the cosines of the angle(R, V) and angle(N, L)
+            //      - lightR, lightG, and lightB as RGB-values of light L1
+            //      - ambieR, ambieG, and ambieB as RGB-values of the ambient light
+            //      - materR, materG, and materB as RGB-values of the material in point P
+            let C_r = materR*( ambieR + lightR * (cosA + Math.pow(cosRV, nMat) ));
+            let C_g = materG*( ambieG + lightG * (cosA + Math.pow(cosRV, nMat) ));
+            let C_b = materB * (ambieB + lightB * (cosA + Math.pow(cosRV, nMat)));
+            phongColor_rgb_0to1(C_r, C_g, C_b);
+            
+            
+            // ==========  YOUR CODE : END   of task 4 ============================================
+            
+            
+            
+            // ##########  YOUR CODE : BEGIN of task 5 ############################################
+            // j) own variation/extension of the given Phong formula
+            //    hint: if you want to solve this optional task, then you have to deside which
+            //          variation you want/can implement... 
+            
+            
+            // ==========  YOUR CODE : END   of task 5 ============================================
+            
+            // ##########  YOUR CODE : BEGIN of task 6 ############################################
+            // k) refracted ray T
+            //    hints: - you might implement the calculation scheme shown at slide V3.2-17
+            //           - it is recommended to use the variable strokeLength in the calculation
+            //             of rfrEnd.x and rfrEnd.y (the code above shows you according examples)
+            let tx = -2*nDx*cosA - lDx;
+            let ty = -2*nDy*cosA - lDy;
+            rfrEnd.x = matPt1.x + tx*strokeLength;      
+            rfrEnd.y = matPt1.y + ty*strokeLength; 
+            len = hypot(tx, ty);
+            tx/=len;
+            ty/=len;
+            let cosBB = tx*nDx+ty*nDy;
+            angleBe_inDegreeIs(cosBB)
+            // ==========  YOUR CODE : END   of task 6 ============================================
+            
+            
+            
+            // ##########  YOUR CODE : BEGIN of task 7 ############################################
+            // l) optional task is total reflection
+            
+            
+            // ==========  YOUR CODE : END   of task 7 ============================================
+        }
+        
+        function redraw(cnv){
+            cnv || (cnv = document.getElementById("theCanvas"));
+            if (!cnv)
+                return;
+            var ctx = cnv.getContext("2d");
+            if (!ctx)
+                return;
+
+            // 1. calculate positions of dependent points
+            doCalc();            
+
+            // 2. clear canvas
+            ctx.save();
+                ctx.setTransform(1, 0, 0, 1, 0, 0); // set identity matrix
+                ctx.fillStyle = calcBgColor();
+                ctx.fillRect(0, 0, cnv.width, cnv.height);
+            
+            // 3. draw lines
+                // 3a) material
+                ctx.strokeStyle = hexColorStr(materR, materG, materB);
+                ctx.beginPath();
+                ctx.moveTo(matBeg.x, cnv.height-matBeg.y);
+                ctx.lineTo(matEnd.x, cnv.height-matEnd.y);
+                ctx.stroke();
+
+                ctx.strokeStyle = "blue"; 
+                // 3b) directions to light and cam, ideal reflection direction
+                if (showRays){
+                    ctx.beginPath();
+                    ctx.moveTo(light1.x, cnv.height-light1.y);
+                    ctx.lineTo(matPt1.x, cnv.height-matPt1.y);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(  cam1.x, cnv.height-  cam1.y);
+                    ctx.lineTo(matPt1.x, cnv.height-matPt1.y);
+                    ctx.stroke();
+
+                    ctx.beginPath();
+                    ctx.moveTo(matPt1.x, cnv.height-matPt1.y);
+                    ctx.lineTo(outEnd.x, cnv.height-outEnd.y);
+                    ctx.stroke();
+ 
+                    ctx.beginPath();
+                    ctx.moveTo(matPt1.x, cnv.height-matPt1.y);
+                    ctx.lineTo(rfrEnd.x, cnv.height-rfrEnd.y);
+                    ctx.stroke();
+               }                
+                
+                // 3c) material normal
+                ctx.beginPath();
+                ctx.moveTo(matPt1.x, cnv.height-matPt1.y);
+                ctx.lineTo(nrmEnd.x, cnv.height-nrmEnd.y);
+                ctx.stroke();
+
+                
+            // 4. draw text    
+                ctx.fillStyle = "black"
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("L1", light1.x+9, cnv.height- light1.y-9);
+                ctx.fillText("C1",   cam1.x+5, cnv.height-   cam1.y-5);
+                ctx.fillText("N" , nrmEnd.x+5, cnv.height- nrmEnd.y-5);
+                ctx.fillText("P" , matPt1.x-3, cnv.height- matPt1.y+21);
+                if (showRays){ // give the rays a label
+                    ctx.fillText("L", (light1.x+matPt1.x)/2+5, cnv.height-(light1.y+matPt1.y)/2-5);
+                    ctx.fillText("V", (  cam1.x+matPt1.x)/2+5, cnv.height-(  cam1.y+matPt1.y)/2-5);
+                    ctx.fillText("R", (outEnd.x+matPt1.x)/2+5, cnv.height-(outEnd.y+matPt1.y)/2-5);
+                    ctx.fillText("T", (rfrEnd.x+matPt1.x)/2+5, cnv.height-(rfrEnd.y+matPt1.y)/2-5);
+                }
+                // texts drawn relative to material line
+                ctx.save();
+                ctx.translate(matPt1.x, cnv.height-matPt1.y);
+                ctx.rotate((matBeg.y-matEnd.y)/cnv.width);
+                ctx.fillText("front side",  100, -5);
+                ctx.fillText("back side" ,  100, 15);
+                ctx.fillText("medium F"  , -150, -5);
+                ctx.fillText("medium B"  , -150, 15);
+                ctx.restore();
+                        
+            // 5. draw all points
+            for (var idx=0; idx<pts.length; idx++){
+                ctx.beginPath();
+                ctx.fillStyle = pts[idx].color;
+                ctx.arc(pts[idx].x, cnv.height-pts[idx].y, epPointRadius, 0, 2 * Math.PI, false);
+                ctx.fill();
+            }
+            
+            // show the color of the light
+            ctx.fillStyle   = light1.color;
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(light1.x, cnv.height-light1.y, epPointRadius*2, 0, 2 * Math.PI, false);
+            ctx.fill();
+            ctx.stroke();
+            
+            ctx.restore(); 
+        }
+        
+        function initScene(){
+            // code placed here will be executed when the html-page is loaded completely
+            valuesToInpts();
+            redraw();
+            // ... 
+        }
+        
+    </script>
+    <style>
+        ol li { padding-bottom:1em; }
+    </style>
+</head>
+<body onload="initScene()">
+    <h2>Graded Assignment 1: "Ray at point: Reflection and Refraction"-skeleton</h2>
+    <hr>
+    <b>Introduction <span onclick="swapVis(this, 'intro');">[hide]</span></b><br>
+    <div id="intro">
+        At the begin of the course we started with a "Ray to point"-exercise, where reflection was
+        to be implemented in a simple 2d scene. 
+        In the current assignment the solution is to be extended according to the aspects:
+        <ol>
+            <li>Phong lighting model and</li>
+            <li>refraction</li>
+        </ol>
+        Follow the instructions below. Once completed, submit your solution here in moodle. <br>
+        <b>Note:</b>
+        With submission of your solution, you confirm that you submit <b>your own work</b>. 
+        We will automatically run <b>duplicate scanner</b> and other measures over your submissions. 
+        If we have reasons to believe that you shared or did not submit your own work, we consider 
+        it as attempted fraud. In this case your submission will be <b>graded zero points</b> and 
+        we reserve additional measures!
+    </div>
+    <hr>
+    <b>General hints: <span onclick="swapVis(this, 'hints');">[hide]</span></b><br>
+    <div id="hints">
+        <ul>
+            <li>In the source code of the given program skeleton you will find the marks<br>
+                <b><i><code>##########  YOUR CODE : BEGIN of task</code></i></b><br>
+                and<br>
+                <b><i><code>##########  YOUR CODE : BEGIN of task</code></i></b><br>
+                followed by the according task number.
+                Insert your code for the solution of <i>task x</i> between these marks.
+                </li>
+            <li>Use the approaches presented in the course. If you implement other approaches, 
+                then <b>explain it explicitely</b> in the comments aside your implementation 
+                and supply a link to an according scientific source.</li>
+            <li>Write <b>your own code</b> with <b>your comments</b>.</li>
+            <li>Do not use libraries for the calculations! 
+                Use of the <code>Math</code> class is of course allowed.</li>
+            <li>It is possible to get full marks without solving <b>optional tasks</b>. 
+                Nevertheless if you have time, feel free to solve optional tasks too. 
+                This opens the possibility of getting additional points.</li>
+        </ul>
+    </div>
+    <hr>
+    <div style="display: flex; justify-content: center;">
+        <div style="padding-right:10px; display:inline-block; width:500px">
+            <b>Current parameter values</b><br>
+            You should change them during your tests.<br><br>
+            I<sub>L, &lambda;</sub> = 
+            R:<input id="lightR" type="number" value="1.0" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="lightG" type="number" value="0.8" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="lightB" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> <br>
+            I<sub>amb, &lambda;</sub> = 
+            R:<input id="ambieR" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="ambieG" type="number" value="0.2" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="ambieB" type="number" value="0.3" style="width:4em" step=".1" oninput="handleInputChg()"> <br>
+            C<sub>M, &lambda;</sub> = 
+            R:<input id="materR" type="number" value="1.0" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            G:<input id="materG" type="number" value="0.8" style="width:4em" step=".1" oninput="handleInputChg()"> 
+            B:<input id="materB" type="number" value="0.1" style="width:4em" step=".1" oninput="handleInputChg()"> <br>
+            n (shininess exponent):
+            <input id="nMat" type="number" value="8.0" style="width:4em" step="1"  oninput="handleInputChg()"> <br>
+            &eta;<sub>F</sub> (Eta of medium F):
+            <input id="etaF" type="number" value="1.0" style="width:4em" step=".1" oninput="handleInputChg()"> <br>
+            &eta;<sub>B</sub> (Eta of medium B):
+            <input id="etaB" type="number" value="1.6" style="width:4em" step=".1" oninput="handleInputChg()"> <br><br>
+
+            <div><b>Your numerical results</b></div>
+            <div>1. angle(N, L) = &alpha; = <span id="aglNL">?</span>°</div>
+            <div>2. angle(R, V) = &theta; = <span id="aglRV">?</span>°</div>
+            <div>3. subtr. Mix :  <span id="subMx">?</span> (RGB = <span id="subMc"> &nbsp; &nbsp; &nbsp; </span>)</div>
+            <div>4. Phong Color : <span id="phgMx">?</span> (RGB = <span id="phgMc"> &nbsp; &nbsp; &nbsp; </span>)</div>
+            <div>5. Phong Color*: <span id="phgOx">?</span> (RGB = <span id="phgOc"> &nbsp; &nbsp; &nbsp; </span>)</div>
+            <div>6. angle refract = &beta; = <span id="aglBe">?</span>°</div>
+            <div>7. total reflect : <span id="totRe">?</span></div>
+        </div>
+        <div style="display:inline-block">
+            In this canvas 5 points are draggable (for tests).
+            <canvas id="theCanvas" width="400px" height="400px"
+                  onmousedown="handleDown(event, this);"
+                  onmouseup  ="handleUp  (event, this);"
+                  onmousemove="handleMove(event, this);"
+                  style="border:black solid 1px;" ></canvas>
+        </div>
+    </div>
+    <div style="clear: both;">
+        <hr>
+        <b>Your tasks:</b> 
+        <ol>
+            <li><b>angle(N, L):</b> Calculate the angle between material normal N and the direction to the light L. 
+                Call <code>angleNL_inDegreeIs()</code> with the current value of the angle in degree.</li>
+            <li><b>angle(R, V):</b> Calculate the angle between the ideal reflection direction R and the direction to the camera V. 
+                Call <code>angleRV_inDegreeIs()</code> with the current value of the angle in degree.</li>
+            <li><b>subtractive color mix at P:</b> Calculate the resulting color (broadband) in point P, i.e. the color 
+                I<sub>L, &lambda;</sub> of the light L1
+                filtered by the material color C<sub>M, &lambda;</sub> (camera C1 as well as 
+                the ambient light I<sub>amb, &lambda;</sub> are irrelevant here!). 
+                Call <code>subMixColor_rgb_0to1()</code> with the calculated RGB-values. Each must be in the range from 0 to 1.</li>
+            <li><b>Phong lighting model:</b> Calculate the color C<sub>&lambda;</sub> for Camera C1 looking at P 
+                according to the local Phong lighting model which is represented by the following simplified formula:<br>
+                <span style="display:inline-block;border:1pt solid gray; padding:3px"><i> &nbsp; 
+                C<sub>&lambda;</sub> = C<sub>M, &lambda;</sub>*(
+                     I<sub>amb, &lambda;</sub>
+                    +I<sub>L, &lambda;</sub> * (cos(&alpha;) +  cos<sup>n</sup>(&theta;))
+                    )</i></span>, 
+                where:<br> &nbsp; 
+                   &lambda; is {R,G,B};  &nbsp; 
+                   C<sub>M, &lambda;</sub> is the material color;  &nbsp; 
+                   &alpha; is angle(N, L);  &nbsp; 
+                   &theta; is angle(R, V);  &nbsp; 
+                   n is the shininess exponent
+                <br>
+                
+                Call <code>phongColor_rgb_0to1()</code> with the current RGB-values. Each must be in the range from 0 to 1.<br>
+                Hint: To keep the R, G, and B values <= 1, you can easily use Math.max, but in general it is better to keep the
+                      ratios between R, G, and B (i.e. to keep the hue). Can you implement such an operation? 
+                <b>Explain</b> what you have implemented to ensure that the values do not leave the range 0...1!
+                </li>
+            <li>an optional task is <b>own variation/extension of the formula:</b> There are some versions of the formula (in the
+                    course material as well as in the literature). Extend the formula given above in a way which is
+                    interesting for you. Explain the (physical) motivation for your variation/extension.
+                    Call <code>phongColor2_rgb_0to1()</code> with the current RGB-values. Each must be in the range from 0 to 1.</li>
+                     </li>
+            <li><b>refracted ray T:</b> Let us assume, that the material is semitransparent. Calculate the direction of the
+                     refracted ray T in point P.
+                     Call <code>angleBe_inDegreeIs()</code> with the current value of the refraction angle &beta; in degree.</li>
+                     Store the x and y coordinate of the shown end point of the refracted ray in rfrEnd.x and rfrEnd.y.</li>
+            <li>an optional task is <b>total reflection:</b> Check if total reflection accured and call 
+                     <code>totalReflectionDetected()</code> with the according boolean parameter 
+                     (<code>true</code> or <code>false</code>).</li>
+        </ol>
+    </div>
+</body>
+</html>
